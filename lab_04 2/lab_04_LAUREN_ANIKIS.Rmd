@@ -569,7 +569,7 @@ You're more intersted in looking at the company-to-company-to-company pipeline, 
 You don't know exactly how to do this, other than you have a vague idea that you can probably use a case_when() function.  To answer this question, you don't need to write any code.  You just need to be able to describe what you think you could do to solve the problem, in English, below. One (time consuming solution): open the original data file in a text editor and change them by hand.  There's a better way to do this! Describing what you want to do in simple terms lets you ask others for help, or search for help on the web. Put your answer below.
 
 ```{r}
-#
+#I want to make all reporter_name columns that have the word "CARDINAL" to be named the same way, I would probably use a case_when to rename everything
 ```
 ## Submission
 
