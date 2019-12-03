@@ -1,0 +1,178 @@
+---
+title: "My Project Pt 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this project I will determine what citis are rural vs urban, which rural and urban cities have the most pills delivered to them, and which have the highest pills per person. 
+
+```{r}
+library(janitor)
+library(arcos)
+library(tidyverse)
+library(tidycensus)
+```
+
+```{r}
+key <- "uO4EK6I"
+```
+
+first loading in the ARCOS data to work with 
+
+```{r}
+arcos_county_pills_per_year <- summarized_county_annual(key = key) %>% 
+  clean_names()
+```
+
+next I need to load in populations 
+
+```{r}
+arcos_county_population_per_year <- county_population(key = key) %>%
+  clean_names()
+```
+
+next I will load in opiod overdose data and rural urban continuum data 
+
+```{r}
+overdoses_data <- read_tsv("data/2006-2012.tsv")
+urban_rural_continuum <- read_tsv("data/ruralurbancodes2013.tsv")
+```
+
+next I want to join them together so I can sort them all together 
+
+```{r}
+pills_and_population_per_year <- arcos_county_pills_per_year %>%
+  inner_join(arcos_county_population_per_year, by=c("countyfips", "buyer_county", "buyer_state", "year")) %>%
+  select(buyer_county, buyer_state, countyfips, year, population, dosage_unit)
+```
+
+```{r}
+#remove(arcos_county_pills_and_population_per_year)
+```
+
+next I need to determine which cities are urban
+according to HRSA.gov an urban county contains more than 50,000 people 
+so which counties are considered urban?
+
+```{r}
+urban_counties <- pills_and_population_per_year %>%
+  filter(population > 50000) 
+```
+
+next I want to know which counties are rural 
+according to HRSA.gov a rural county has less than 2,500 people
+so which counties are considered rural?
+
+```{r}
+rural_counties <- pills_and_population_per_year %>%
+  filter(population < 2500)
+```
+
+Now that I know what counties are rural and what are urban I want to figure out the pills per person of each county 
+What are the pills per person of urban counties?
+
+```{r}
+urban_counties %>%
+  mutate(pills_per_person = dosage_unit/population) %>%
+  arrange(desc(pills_per_person))
+```
+
+leavenworth KS
+  2007 502
+  2006 397
+  2008 388
+followed by:
+Charleston SC 
+  2012 382
+  2011 360
+  2010 331
+  2009 314
+Pike KY 
+  2011 170
+Walker AL 
+  2012 163
+  2011 159
+Pike KY 
+  2010 159
+  2012 153
+Walker Al 
+  2010 150
+Hablen TN 
+  2011 148
+  2010 147
+  2012 146
+Pike Ky 
+  2006 144
+Charleston SC 
+  2008 143
+Walker Al 
+  2009 142
+Pike KY 
+  2009 141
+
+Next up I want to know the same for rural counties 
+
+```{r}
+rural_counties %>%
+  mutate(pills_per_population = dosage_unit/population) %>%
+  arrange(desc(pills_per_population))
+```
+In order:
+Clark KS 
+  2012 105
+  2011 102
+Comanche KS 
+  2011 89
+  2010 81
+Clark KS 
+  2010 80
+Dundy NE 
+  2012 80
+Comanche KS 
+  2012 79
+De Baca NM
+  2012 77
+Comanche KS
+  2009 74
+Garfield WA 
+  2012 68
+Greely KS 
+  2009 67
+De Baca NM 
+  2011 67
+Garfield WA 
+  2008 67
+Greely KS
+  2011 65
+Garfield WA 
+  2007 65
+  2011 65
+Melette SD 
+  2012 65
+De Baca NM 
+  2010 64
+Greely KS
+  2012 63
+Garfield WA
+  2009 62
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

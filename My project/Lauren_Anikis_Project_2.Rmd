@@ -1,0 +1,325 @@
+---
+title: "Lauren_Anikis_Project_2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this project I will determine what citis are rural vs urban, which rural and urban cities have the most pills delivered to them, and which have the highest pills per person. 
+
+```{r}
+#install.packages("janitor")
+#install.packages("arcos")
+#install.packages("tidycensus")
+#install.packages("mapview")
+#install.packages("ggthemes")
+#install.packages("scales")
+#install.packages("tidyverse")
+
+library(janitor)
+library(arcos)
+library(tidyverse)
+library(tidycensus)
+library(mapview)
+library(ggthemes)
+library(scales)
+
+```
+
+```{r}
+#install.packages("ggrepel")
+library(ggrepel)
+```
+
+```{r}
+key <- "uO4EK6I"
+```
+
+first loading in the ARCOS data to work with 
+
+```{r}
+arcos_county_pills_per_year <- summarized_county_annual(key = key) %>% 
+  clean_names()
+```
+
+next I need to load in populations 
+
+```{r}
+arcos_county_population_per_year <- county_population(key = key) %>%
+  clean_names()
+```
+
+next I will load in opiod overdose data and rural urban continuum data 
+
+```{r}
+overdoses_data <- read_tsv("data/2006-2012.tsv")
+urban_rural_continuum <- read_csv("data/ruralurbancodes2013.csv")
+```
+
+
+```{r}
+overdoses_data2 <- overdoses_data[which(overdoses_data$`Crude Rate` != "Suppressed"), names(overdoses_data) %in% c("Notes", "County", "County Code", "Deaths", "Population", "Crude Rate", "Crude Rate Lower 95% Confidence Interval", "Crude Rate Upper 95% Confidence Interval", "Crude Rate Standard Error", "Age Adjusted Rate", "Age Adjusted Rate Lower 95% Confidence Interval", "Age Adjusted Rate Upper 95% Confidence Interval", "Age Adjusted Rate Standard Error", "% of Total Deaths")]
+```
+
+```{r}
+overdoses_data_clean <- overdoses_data %>%
+  clean_names() %>%
+  select("county", "county_code", "deaths", "population", "crude_rate")
+```
+
+```{r}
+overdose_urban_rural_combined <- overdoses_data_clean %>%
+  inner_join(urban_rural_continuum, by=c("county_code" = "FIPS"))
+```
+
+#1. What counties are rural?
+```{r}
+overdoses_rural_data <- overdose_urban_rural_combined %>%
+  filter(RUCC_2013 > 6)
+```
+
+#2. What counties are urban?
+```{r}
+overdoses_urban_data <- overdose_urban_rural_combined %>%
+  filter(RUCC_2013 > 4)
+```
+
+```{r}
+options(scipen = 999)
+```
+
+#3. is there a correllation between RUCC and number of pills/person?
+```{r}
+arcos_county_pills_and_population <- arcos_county_pills_per_year %>%
+  inner_join(arcos_county_population_per_year, by=c("countyfips", "buyer_county", "buyer_state", "year")) %>%
+  group_by(countyfips, buyer_county, buyer_state) %>%
+  summarise(total_pills = sum(dosage_unit), total_population = sum(population)) %>%
+  mutate(pills_per_person = total_pills/total_population) %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+```
+
+```{r}
+arcos_county_pills_and_population %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+```
+
+#4. What is the average pills per person for each different RUCC classification?
+```{r}
+RUCC_2013_data <- arcos_county_pills_and_population %>%
+  filter(!is.na(pills_per_person)) %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_pills_per_person = mean(pills_per_person))
+```
+
+
+```{r}
+five_seven <- arcos_county_pills_and_population %>%
+  filter(RUCC_2013 == 5 | RUCC_2013 == 7) %>%
+  arrange(desc(buyer_state))
+
+```
+
+```{r}
+# Define API Key
+census_key <- census_api_key("549950d36c22ff16455fe196bbbd01d63cfbe6cf")
+
+# If you need to look up variables, this is how you do it
+acs_variables <- load_variables(2017, "acs5" )
+#feed in variable from acs_variables
+county_geodata_shifted <- get_acs(geography = "county",
+              variables = "B01001_001", geometry = TRUE, shift_geo = TRUE)
+
+state_geodata <- get_acs(geography = "state",
+              variables = "B01001_001", geometry = TRUE)
+
+```
+
+```{r}
+geo_5_7 <- county_geodata_shifted %>%
+  inner_join(five_seven, by=c("GEOID" = "countyfips"))
+```
+
+#5 what does the average pills per person for counties classified 5 and seven look like?
+```{r}
+geo_5_7 %>%
+  ggplot(aes(fill = pills_per_person)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill='Pills per Person',title="TBD", subtitle = "TBD", caption = "Source: ARCOS database") +
+  theme(legend.position="bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+
+```
+
+#6. is this trend different from the overall pills/person?
+
+```{r}
+arcos_county_geo_data <- county_geodata_shifted %>%
+  inner_join(arcos_county_pills_and_population, by=c("GEOID" = "countyfips"))
+
+```
+
+```{r}
+arcos_county_geo_data %>%
+  ggplot(aes(fill = pills_per_person)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Pills per Person', caption = "Source: ARCOS database") +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+
+#7. do drug overdoses also correlate with population/RUCC?
+
+```{r}
+RUCC_2013_overdose_data <- overdose_urban_rural_combined %>%
+  filter(!is.na(deaths)) %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_deaths_per_person = mean(deaths))
+
+```
+
+
+#8. are there any counties in particular from RUCC groups 5 and 7 that stand out?
+
+```{r}
+ggplot(five_seven) +
+  geom_point(aes(total_population, total_pills)) +
+  labs(x="Population", y="Total pills", caption = "Source: DEA ARCOS database, via Washington Post", fill="buyer_county") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_smooth(aes(total_population, total_pills), method = "lm", se = FALSE) 
+  geom_text_repel(aes(total_population, total_pills, label=buyer_county),
+                  subset(five_seven, total_pills > 40000000))
+```
+Humboldt, CA
+Pike, KY
+
+
+
+#9. what is different about those counties?
+
+why?
+
+could this trend be tied to economic reasons?
+
+1. unemployment
+
+#10 what does the unemployment data look like when combined with RUCC?
+```{r}
+unemployment_data <- read_csv("data/county_unemployment.csv")
+```
+
+```{r}
+unemployment_data_RUCC <- unemployment_data %>%
+  mutate(countyfips = str_sub(LAUS, start=3L, end=7L)) %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+```
+
+```{r}
+RUCC_2013_unemployment_data <- unemployment_data_RUCC %>%
+  group_by(RUCC_2013) %>%
+  summarise(unemployment_rate = mean(`Unemployment_Rate%`))
+```
+Aside from 9, 5 and 7 are the two lowest unemployment rate 
+
+average unemployment
+average income
+average opiod deaths
+  scatter plot 
+racial makeup 
+poverty 
+
+#11. Do o0verdoses match the trend of the pills shipped to these counties identified as 5 and 7?
+
+```{r}
+overdoses_5_7 <- five_seven %>%
+  inner_join(overdoses_data, by=c("countyfips" = "County Code"))
+```
+#NEXT I NEED TO DELETE SUPRESSED???
+
+```{r}
+overdoses_5_7 <- overdoses_5_7 %>%
+  filter(!str_detect(`Crude Rate`, "Missing|Suppressed|Unreliable")) %>%
+  mutate(`Crude Rate` = as.numeric(`Crude Rate`))
+```
+
+```{r}
+glimpse(overdoses_5_7)
+```
+
+
+```{r}
+overdose_urban_rural_combined <- overdose_urban_rural_combined %>%
+ filter(!str_detect(crude_rate, "Missing|Suppressed|Unreliable")) %>%
+  mutate(crude_rate = as.numeric(crude_rate))
+```
+
+```{r}
+RUCC_2013_overdose_data <- overdose_urban_rural_combined %>%
+  group_by(RUCC_2013) %>%
+  summarise(overdose_rate = mean(crude_rate))
+```
+The more rural you get the higher the overdoses.  
+
+#12 what does the overdose data look like mapped out? How does it compare to the pills shipped map?
+
+```{r}
+overdose_urban_rural_geo <- county_geodata_shifted  %>%
+  inner_join(overdose_urban_rural_combined, by=c("GEOID" = "county_code"))
+```
+
+```{r}
+overdose_urban_rural_geo %>%
+  ggplot(aes(fill = crude_rate)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Overdoses per person') +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+The area in appalacia with high overdoses also has high pills per person 
+
+#13.what counties have the highest overdoses per person?
+```{r}
+view(overdose_urban_rural_combined) %>%
+  arrange(desc(crude_rate))
+```
+
+#14. Do any counties have high death rates and high pills per person?
+Mingo County, WV
+Floyd KY
+
+#15 What does the data for overdoses and pills shipped look like combined?
+```{r}
+#overdoses_pills <- overdose_urban_rural_combined %>%
+ # inner_join(arcos_county_pills_and_population, by=c('county_code' = 'countyfips')) %>%
+  #select('county', 'county_code', 'deaths', 'crude_rate', 'Population_2010.x', 'RUCC_2013.x', 'Description.x', 'total_pills', 'pills_per_person') %>%
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
