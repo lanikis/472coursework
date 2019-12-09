@@ -1,0 +1,243 @@
+---
+title: "Lauren_Anikis_Final_Markdown"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("janitor")
+#install.packages("arcos")
+#install.packages("tidycensus")
+#install.packages("mapview")
+#install.packages("ggthemes")
+#install.packages("scales")
+#install.packages("tidyverse")
+#install.packages("ggrepel")
+library(janitor)
+library(arcos)
+library(tidyverse)
+library(tidycensus)
+library(mapview)
+library(ggthemes)
+library(scales)
+library(ggrepel)
+```
+
+```{r}
+key <- "uO4EK6I"
+arcos_county_pills_per_year <- summarized_county_annual(key = key) %>% 
+  clean_names()
+arcos_county_population_per_year <- county_population(key = key) %>%
+  clean_names()
+```
+#Pull in data
+This is the data for overdoses, RUCC, and unemployment
+```{r}
+overdoses_data <- read_tsv("data/2006-2012.tsv")
+urban_rural_continuum <- read_csv("data/ruralurbancodes2013.csv")
+unemployment_data <- read_csv("data/county_unemployment.csv")
+```
+Here I need to clean up the overdoses data as there is a lot of missing, suppressed, or unreliable data. 
+```{r}
+overdoses_data <- overdoses_data %>%
+  filter(!str_detect(`Crude Rate`, "Missing|Suppressed|Unreliable")) %>%
+  mutate(`Crude Rate` = as.numeric(`Crude Rate`))
+
+```
+```{r}
+overdose_urban_rural_combined <- overdoses_data %>%
+  inner_join(urban_rural_continuum, by=c("County Code" = "FIPS"))
+```
+#Pull in ARCOS data
+```{r}
+arcos_county_pills_and_population <- arcos_county_pills_per_year %>%
+  inner_join(arcos_county_population_per_year, by=c("countyfips", "buyer_county", "buyer_state", "year")) %>%
+  group_by(countyfips, buyer_county, buyer_state) %>%
+  summarise(total_pills = sum(dosage_unit), total_population = sum(population)) %>%
+  mutate(pills_per_person = total_pills/total_population) %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+
+arcos_county_pills_and_population %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+```
+#Pull in census data
+I need geodata to create maps and data on county income and racial makeup, all of which I will get from the census data with tidycensus
+```{r}
+# Define API Key
+census_key <- census_api_key("549950d36c22ff16455fe196bbbd01d63cfbe6cf")
+
+# If you need to look up variables, this is how you do it
+acs_variables <- load_variables(2017, "acs5" )
+#feed in variable from acs_variables
+county_geodata_shifted <- get_acs(geography = "county",
+              variables = "B01001_001", geometry = TRUE, shift_geo = TRUE)
+
+state_geodata <- get_acs(geography = "state",
+              variables = "B01001_001", geometry = TRUE)
+
+county_income <- get_acs(geography = "county",
+                         variables = 	"B19013_001", geometry = FALSE)
+
+racial_makeup <- get_acs(geography = "county", 
+                               variables = "B02001_002", geometry = FALSE, summary_var = "B01001_001") %>%
+  mutate(pct_white = estimate/summary_est) %>%
+  mutate(pct_nonwhite = 1-pct_white)
+```
+
+#RUCC data summarised
+
+Pills per person
+This is the summary of average pills per person for each RUCC classification
+```{r}
+Pills_per_person_summarised <- arcos_county_pills_and_population %>%
+  filter(!is.na(pills_per_person)) %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_pills_per_person = mean(pills_per_person))
+```
+Overdose rate
+This is the summary of average overdose rate for each RUCC classification
+```{r}
+Overdose_data_summarise <- overdose_urban_rural_combined %>%
+  filter(!is.na(Deaths)) %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_deaths_per_person = mean(Deaths))
+
+```
+Unemployment
+This is the summary of average unemployment rate for each RUCC classification
+```{r}
+unemployment_data_RUCC <- unemployment_data %>%
+  mutate(countyfips = str_sub(LAUS, start=3L, end=7L)) %>%
+  inner_join(urban_rural_continuum, by=c("countyfips" = "FIPS"))
+
+unemployment_data_summarised <- unemployment_data_RUCC %>%
+  group_by(RUCC_2013) %>%
+  summarise(unemployment_rate = mean(`Unemployment_Rate%`))
+```
+Racial Makeup 
+This is the summary of average percent of the population that is white for each RUCC classification
+```{r}
+racial_makeup <- racial_makeup %>% 
+  inner_join(urban_rural_continuum, by=c('GEOID' = 'FIPS'))
+racial_makeup_summarised <- racial_makeup %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_nonwhite = mean(pct_white))
+```
+Income 
+This is the summary of average income for each RUCC classification
+```{r}
+county_income <- county_income %>%
+  inner_join(urban_rural_continuum, by=c('GEOID' = 'FIPS'))
+county_income_summarised <- county_income %>%
+  group_by(RUCC_2013) %>%
+  summarise(average_income = mean(estimate))
+```
+
+#Maps
+
+Pills per person
+This map shows the average pills per person for each county in the United States.  The darker areas have lower rates of pills per person, the lighter areas have higher rates of pills per person shipped between 2006-2012. 
+```{r}
+arcos_county_geo_data <- county_geodata_shifted %>%
+  inner_join(arcos_county_pills_and_population, by=c("GEOID" = "countyfips"))
+
+arcos_county_geo_data %>%
+  ggplot(aes(fill = pills_per_person)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Pills per Person', caption = "Source: ARCOS database") +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+Overdose rate
+This map shows the data for overdose rates for counties across America.  There are many counties that lack sufficient data, which is why there are a lot of white spaces.  The darker areas have lower rates of overdoses and the lighter areas have higher rates of overdoses. 
+```{r}
+overdose_urban_rural_geo <- county_geodata_shifted  %>%
+  inner_join(overdose_urban_rural_combined, by=c("GEOID" = "County Code"))
+
+overdose_urban_rural_geo %>%
+  ggplot(aes(fill = `Crude Rate`)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Overdoses per person') +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+Racial Makeup
+This map shows the percent of white populations across America.  The lighter colors show higher rates of white populations, the darker colors show higher rates of nonwhite population. 
+```{r}
+racial_makeup_geo <- county_geodata_shifted %>%
+  inner_join(racial_makeup, by='GEOID')
+
+racial_makeup_geo %>%
+  ggplot(aes(fill = pct_white)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Racial Makeup') +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+Income
+This map shows the average income for counties across the United States.  Darker colors show lower average incomes and lighter colors show higher average incomes. 
+```{r}
+county_income_geo <- county_geodata_shifted %>%
+  inner_join(county_income, by='GEOID')
+
+county_income_geo %>%
+  ggplot(aes(fill = estimate.y)) +
+  geom_sf(lwd = 0) +
+  theme_map() +
+  labs(fill = 'Average Income') +
+  theme(legend.position = "bottom") +
+  scale_fill_viridis_c(option = "magma",labels = comma)
+```
+
+
+#of the counties classified 5 and 7, which counties had significantly high pills for the population?
+This scatter plot maps the total pills and total population for counties classified as 5 and 7 on the RUCC.  It shows that there is a strong correlation between population and pills shipped, but it also shows a few specific outliers. 
+```{r}
+five_seven <- arcos_county_pills_and_population %>%
+  filter(RUCC_2013 == 5 | RUCC_2013 == 7) %>%
+  arrange(desc(buyer_state))
+
+ggplot(five_seven) +
+  geom_point(aes(total_population, total_pills)) +
+  labs(x="Population", y="Total pills", caption = "Source: DEA ARCOS database, via Washington Post", fill="buyer_county") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_smooth(aes(total_population, total_pills), method = "lm", se = FALSE) +  
+  geom_text_repel(aes(total_population, total_pills, label=buyer_county),
+                  subset(five_seven, total_pills > 40000000))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
